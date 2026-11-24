@@ -23,32 +23,47 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Build ${{ matrix.client }}
         working-directory: ${{ matrix.client }}
         run: |
-          # 自动检测构建工具
-          if [ -f "./gradlew" ]; then
+          # 1. 优先使用 gradlew
+          GRADLEW_PATH=$(find . -maxdepth 2 -name "gradlew" | head -n 1)
+          if [ -n "$GRADLEW_PATH" ]; then
+            echo "Found gradlew at: $GRADLEW_PATH"
+            GRADLE_DIR=$(dirname "$GRADLEW_PATH")
+            cd "$GRADLE_DIR"
             chmod +x ./gradlew
             ./gradlew build
-          elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+          
+          # 2. 其次查找 build.gradle（Gradle）
+          elif [ -n "$(find . -maxdepth 2 -name 'build.gradle*' | head -n 1)" ]; then
+            echo "Found build.gradle, using system gradle"
+            GRADLE_DIR=$(dirname "$(find . -maxdepth 2 -name 'build.gradle*' | head -n 1)")
+            cd "$GRADLE_DIR"
             gradle build
-          elif [ -f "pom.xml" ]; then
+          
+          # 3. 最后查找 pom.xml（Maven）
+          elif [ -n "$(find . -maxdepth 2 -name 'pom.xml' | head -n 1)" ]; then
+            echo "Found pom.xml, using Maven"
+            MAVEN_DIR=$(dirname "$(find . -maxdepth 2 -name 'pom.xml' | head -n 1)")
+            cd "$MAVEN_DIR"
             mvn clean package -DskipTests
+          
           else
-            echo "未找到 Gradle 或 Maven 构建文件，请检查 ${{ matrix.client }} 目录"
+            echo "Error: No build file found in ${{ matrix.client }} (searched up to 2 levels deep)"
             exit 1
           fi
 
       - name: Copy artifacts to unified folder
         run: |
           mkdir -p build-output/${{ matrix.client }}
-          # 同时查找 Gradle (build/libs) 和 Maven (target) 的输出目录
-          find ${{ matrix.client }} -path "*/build/libs/*.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
-          find ${{ matrix.client }} -path "*/target/*.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
-          # 如果以上路径未找到，进行全目录兜底查找
-          if [ -z "$(ls -A build-output/${{ matrix.client }}/)" ]; then
-            find ${{ matrix.client }} -name "*.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
-          fi
+          # 递归查找 jar 文件
+          find ${{ matrix.client }} -name "*.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
+          # 递归查找 apk 文件（Android 项目）
+          find ${{ matrix.client }} -name "*.apk" -exec cp {} build-output/${{ matrix.client }}/ \;
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
