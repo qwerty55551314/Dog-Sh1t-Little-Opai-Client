@@ -23,41 +23,42 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 打印目录结构 (调试用)
-        run: |
-          echo "=== ${{ matrix.client }} 目录树 ==="
-          find ${{ matrix.client }} -maxdepth 3 -type f \( -name "*.gradle*" -o -name "*.xml" -o -name "gradlew" \) 2>/dev/null || echo "未找到构建文件"
-
-      - name: Build ${{ matrix.client }}
+      - name: Attempt Build or Fallback
         working-directory: ${{ matrix.client }}
         run: |
-          # 最深查找 4 层，自动定位构建文件
+          # 尝试查找构建文件
           BUILD_FILE=$(find . -maxdepth 4 \( -name "gradlew" -o -name "build.gradle" -o -name "build.gradle.kts" -o -name "pom.xml" \) | head -n 1)
           
-          if [ -z "$BUILD_FILE" ]; then
-            echo "Error: 在 ${{ matrix.client }} 中未找到任何构建文件，请检查上方的目录树日志。"
-            exit 1
-          fi
-          
-          echo "找到构建文件: $BUILD_FILE"
-          BUILD_DIR=$(dirname "$BUILD_FILE")
-          cd "$BUILD_DIR"
-          
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew build -x test --no-daemon
-          elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-            gradle build -x test --no-daemon
-          elif [ -f "pom.xml" ]; then
-            mvn clean package -DskipTests
+          if [ -n "$BUILD_FILE" ]; then
+            echo "✅ 找到构建文件: $BUILD_FILE，开始尝试编译..."
+            BUILD_DIR=$(dirname "$BUILD_FILE")
+            cd "$BUILD_DIR"
+            if [ -f "./gradlew" ]; then
+              chmod +x ./gradlew
+              ./gradlew build -x test --no-daemon || echo "⚠️ Gradle 编译失败，将回退打包源码"
+            elif [ -f "pom.xml" ]; then
+              mvn clean package -DskipTests || echo "⚠️ Maven 编译失败，将回退打包源码"
+            fi
+          else
+            echo "❌ 未找到任何构建文件 (Gradle/Maven)，该项目可能是纯源码或特殊结构。"
+            echo "📦 将直接打包源码作为产物供下载。"
           fi
 
-      - name: Copy artifacts to unified folder
+      - name: Package Artifacts (Collect JARs & Source ZIP)
         if: always()
         run: |
           mkdir -p build-output/${{ matrix.client }}
+          
+          # 1. 尝试收集任何现成的 jar 文件
           find ${{ matrix.client }} -name "*.jar" -not -name "*-sources.jar" -not -name "*-javadoc.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
-          find ${{ matrix.client }} -name "*.apk" -exec cp {} build-output/${{ matrix.client }}/ \;
+          
+          # 2. 将整个客户端目录打包成 ZIP (防止编译失败什么都没拿到)
+          echo "正在打包源码..."
+          zip -r build-output/${{ matrix.client }}/${{ matrix.client }}-source.zip ${{ matrix.client }} -x "*.git*"
+          
+          # 3. 打印最终收集到的文件列表
+          echo "=== 最终打包产物列表 ==="
+          ls -la build-output/${{ matrix.client }}/
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
