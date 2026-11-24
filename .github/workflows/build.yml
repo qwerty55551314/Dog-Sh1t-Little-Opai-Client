@@ -5,14 +5,13 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch: # 支持手动触发
+  workflow_dispatch: 
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 根据仓库实际子目录调整，这里列出了已知的客户端
         client: [ Amaya-master, Arcane-master, Solitude-master ]
     steps:
       - name: Checkout repository
@@ -24,25 +23,32 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
       - name: Build ${{ matrix.client }}
         working-directory: ${{ matrix.client }}
         run: |
-          # 如果子项目没有 gradlew 文件，则使用系统 gradle
+          # 自动检测构建工具
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
             ./gradlew build
-          else
+          elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
             gradle build
+          elif [ -f "pom.xml" ]; then
+            mvn clean package -DskipTests
+          else
+            echo "未找到 Gradle 或 Maven 构建文件，请检查 ${{ matrix.client }} 目录"
+            exit 1
           fi
 
       - name: Copy artifacts to unified folder
         run: |
           mkdir -p build-output/${{ matrix.client }}
-          # 查找 jar 文件并复制到统一目录，可根据实际输出路径调整
-          find ${{ matrix.client }} -name "*.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
+          # 同时查找 Gradle (build/libs) 和 Maven (target) 的输出目录
+          find ${{ matrix.client }} -path "*/build/libs/*.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
+          find ${{ matrix.client }} -path "*/target/*.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
+          # 如果以上路径未找到，进行全目录兜底查找
+          if [ -z "$(ls -A build-output/${{ matrix.client }}/)" ]; then
+            find ${{ matrix.client }} -name "*.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
+          fi
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
