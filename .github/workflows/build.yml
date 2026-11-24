@@ -23,46 +23,44 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: 检查目录结构 (调试用)
+        run: |
+          echo "=== 根目录文件 ==="
+          ls -la
+          echo "=== ${{ matrix.client }} 目录文件 ==="
+          ls -la ${{ matrix.client }} || echo "目录不存在"
+          echo "=== 深层查找构建文件 ==="
+          find ${{ matrix.client }} -maxdepth 4 \( -name "gradlew" -o -name "build.gradle" -o -name "build.gradle.kts" -o -name "pom.xml" \) 2>/dev/null || echo "未找到"
 
       - name: Build ${{ matrix.client }}
         working-directory: ${{ matrix.client }}
         run: |
-          # 1. 优先使用 gradlew
-          GRADLEW_PATH=$(find . -maxdepth 2 -name "gradlew" | head -n 1)
-          if [ -n "$GRADLEW_PATH" ]; then
-            echo "Found gradlew at: $GRADLEW_PATH"
-            GRADLE_DIR=$(dirname "$GRADLEW_PATH")
-            cd "$GRADLE_DIR"
-            chmod +x ./gradlew
-            ./gradlew build
+          # 最深查找 4 层，自动定位构建文件
+          BUILD_FILE=$(find . -maxdepth 4 \( -name "gradlew" -o -name "build.gradle" -o -name "build.gradle.kts" -o -name "pom.xml" \) | head -n 1)
           
-          # 2. 其次查找 build.gradle（Gradle）
-          elif [ -n "$(find . -maxdepth 2 -name 'build.gradle*' | head -n 1)" ]; then
-            echo "Found build.gradle, using system gradle"
-            GRADLE_DIR=$(dirname "$(find . -maxdepth 2 -name 'build.gradle*' | head -n 1)")
-            cd "$GRADLE_DIR"
-            gradle build
-          
-          # 3. 最后查找 pom.xml（Maven）
-          elif [ -n "$(find . -maxdepth 2 -name 'pom.xml' | head -n 1)" ]; then
-            echo "Found pom.xml, using Maven"
-            MAVEN_DIR=$(dirname "$(find . -maxdepth 2 -name 'pom.xml' | head -n 1)")
-            cd "$MAVEN_DIR"
-            mvn clean package -DskipTests
-          
-          else
-            echo "Error: No build file found in ${{ matrix.client }} (searched up to 2 levels deep)"
+          if [ -z "$BUILD_FILE" ]; then
+            echo "Error: 未找到构建文件，请查看上方的目录结构日志"
             exit 1
+          fi
+          
+          echo "找到构建文件: $BUILD_FILE"
+          BUILD_DIR=$(dirname "$BUILD_FILE")
+          cd "$BUILD_DIR"
+          
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew build -x test --no-daemon
+          elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+            gradle build -x test --no-daemon
+          elif [ -f "pom.xml" ]; then
+            mvn clean package -DskipTests
           fi
 
       - name: Copy artifacts to unified folder
+        if: always() # 即使构建失败也尝试收集可能生成的产物
         run: |
           mkdir -p build-output/${{ matrix.client }}
-          # 递归查找 jar 文件
-          find ${{ matrix.client }} -name "*.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
-          # 递归查找 apk 文件（Android 项目）
+          find ${{ matrix.client }} -name "*.jar" -not -name "*-sources.jar" -not -name "*-javadoc.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
           find ${{ matrix.client }} -name "*.apk" -exec cp {} build-output/${{ matrix.client }}/ \;
 
       - name: Upload build artifacts
