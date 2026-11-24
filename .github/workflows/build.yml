@@ -23,14 +23,10 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 检查目录结构 (调试用)
+      - name: 打印目录结构 (调试用)
         run: |
-          echo "=== 根目录文件 ==="
-          ls -la
-          echo "=== ${{ matrix.client }} 目录文件 ==="
-          ls -la ${{ matrix.client }} || echo "目录不存在"
-          echo "=== 深层查找构建文件 ==="
-          find ${{ matrix.client }} -maxdepth 4 \( -name "gradlew" -o -name "build.gradle" -o -name "build.gradle.kts" -o -name "pom.xml" \) 2>/dev/null || echo "未找到"
+          echo "=== ${{ matrix.client }} 目录树 ==="
+          find ${{ matrix.client }} -maxdepth 3 -type f \( -name "*.gradle*" -o -name "*.xml" -o -name "gradlew" \) 2>/dev/null || echo "未找到构建文件"
 
       - name: Build ${{ matrix.client }}
         working-directory: ${{ matrix.client }}
@@ -39,7 +35,7 @@ jobs:
           BUILD_FILE=$(find . -maxdepth 4 \( -name "gradlew" -o -name "build.gradle" -o -name "build.gradle.kts" -o -name "pom.xml" \) | head -n 1)
           
           if [ -z "$BUILD_FILE" ]; then
-            echo "Error: 未找到构建文件，请查看上方的目录结构日志"
+            echo "Error: 在 ${{ matrix.client }} 中未找到任何构建文件，请检查上方的目录树日志。"
             exit 1
           fi
           
@@ -57,7 +53,7 @@ jobs:
           fi
 
       - name: Copy artifacts to unified folder
-        if: always() # 即使构建失败也尝试收集可能生成的产物
+        if: always()
         run: |
           mkdir -p build-output/${{ matrix.client }}
           find ${{ matrix.client }} -name "*.jar" -not -name "*-sources.jar" -not -name "*-javadoc.jar" -exec cp {} build-output/${{ matrix.client }}/ \;
